@@ -30,7 +30,10 @@ const JobSchema = new Schema({
     },
     output:{
         type:String
-    }
+    },
+    userInput: {
+        type: String
+      }
 })
 
 const Job = mongoose.model("job",JobSchema);

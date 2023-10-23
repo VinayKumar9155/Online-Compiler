@@ -1,119 +1,100 @@
-const express = require('express');
-const mongoose = require('mongoose');
+const express = require("express");
+const mongoose = require("mongoose");
 require("dotenv").config();
-const cors = require('cors');
-const app = express()
-const port = 5000
+const cors = require("cors");
+const app = express();
+const port = 5000;
 const router = require("express").Router();
 const Problem = require("./models/Problems");
-const {generateFile} = require('./generateFile');
-const {executeCpp} = require('./executeCpp')
-const {executePython} = require('./executePython')
-const Job = require('./models/Job.js');
-const cookieParser = require('cookie-parser');
-const AddProblems = require('./routes/AddProblemRoutes')
-const GetProblems = require('./routes/GetproblemsRoute')
-const {requireAuth,checkUser} = require('./middleware/authMiddleware');
-const authRoutes = require('./routes/authRoute')
+const { generateFile } = require("./generateFile");
+const Job = require("./models/Job.js");
+const cookieParser = require("cookie-parser");
+const AddProblems = require("./routes/AddProblemRoutes");
+const GetProblems = require("./routes/GetproblemsRoute");
+const { requireAuth, checkUser } = require("./middleware/authMiddleware");
+const authRoutes = require("./routes/authRoute");
+const fileUpload = require("express-fileupload");
+const { addJobToQueu } = require("./jobQueue");
 
-app.use(express.urlencoded({extended:true}));
+// middlewares
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.use(cookieParser())
+app.use(cookieParser());
 app.use(cors());
-
+app.use(fileUpload());
 
 mongoose.connect("mongodb://localhost:27017/Online-compiler", {
-   useNewUrlParser: true,
-   useUnifiedTopology: true,
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
 });
-
 
 //routes
 
-app.get('*',checkUser)
-app.get('/',requireAuth,(req,res) => res.send('hii'));
+app.get("*", checkUser);
+app.get("/", requireAuth, (req, res) => res.send("hii"));
 app.use(authRoutes);
 
-app.get('/',(req,res)=>{
-    res.send("Hii")
-})
+app.get("/", (req, res) => {
+  res.send("Hii");
+});
 
-app.get('/status', async (req,res)=>{
-    const jobId = req.query.id;
+app.get("/status", async (req, res) => {
+  const jobId = req.query.id;
 
-    if(jobId == undefined)
-    {
-        res.status(400).json({success:false,msg:"Id is not given"});
+  if (jobId == undefined) {
+    res.status(400).json({ success: false, msg: "Id is not given" });
+  }
+
+  try {
+    const job = await Job.findById(jobId);
+
+    if (job == undefined) {
+      res.status(400).json({ success: false, msg: "Invalid id" });
     }
 
-    try{
-        const job = await Job.findById(jobId);
+    res.status(210).json({ success: true, msg: "Valid response", job });
+  } catch (err) {
+    console.log(err);
+    res.status(400).json({ success: false, msg: "err" });
+  }
+});
 
-        if(job==undefined)
-        {
-            res.status(400).json({success:false,msg:"Invalid id"});
-        }
+app.post("/run", async (req, res) => {
+  const { language = "cpp", code, userInput } = req.body;
+  console.log("input",userInput);
+  // if (!req.files || !req.files.file) {
+  //     return res.status(400).json({ error: 'No file uploaded' });
+  //   }
+  // const selectedFile = req.files.file;
 
-        res.status(210).json({success:true,msg:"Valid response",job});
+  // console.log('Uploaded file name:', selectedFile.name);
+  // console.log('Uploaded file size:', selectedFile.size);
+  // console.log('Selected File MIME Type:', selectedFile.mimetype);
+  // // If you want to see the content of the file as a Buffer
+  // console.log('Selected File Data:', selectedFile.data.toString());
 
-    }catch(err)
-    {
-        console.log(err);
-        res.status(400).json({success:false,msg:"err"});
-    }
-})
+//   console.log(language, code.length);
 
-app.post('/run',async (req,res)=>{
+  if (code === undefined || !code) {
+    return res.status(400).json({ success: false, error: "Code is not given" });
+  }
 
-    const {language="cpp",code} = req.body;
-    console.log(language,code.length);
+  let job;
 
-    if(code===undefined)
-    {
-        return res.status(400).json({success:false, error:"Code is not given"});
-    }
+  try {
+    const filePath = await generateFile(language, code);
 
-    let output,job;
-
-    try{
-        const filePath = await generateFile(language,code);
-
-        job =  await new Job({language,filePath}).save();
-        console.log(job);
-
-        const jobId = job["_id"];
-        res.status(201).json({success:true,jobId});
-
-        job["startedAt"] = Date.now();
-        if(language==="cpp")
-        {
-            output =  await executeCpp(filePath);
-            console.log({filePath,output});
-        }
-        else if(language==="py") output = await executePython(filePath); 
-        // return res.json({filePath,output});
-        console.log({filePath,output});
-        console.log(job);
-        job["completedAt"] = Date.now();        
-        job["output"] = output;
-        job["status"] = "success";
-        await job.save();
-        console.log(job);
-    }
-    catch(err)
-    {
-        job["completedAt"] = Date.now();
-        job["output"] = output;
-        job["status"] = "error";
-        await job.save();
-        console.log(job);
-        // res.status(500).json({ err });
-        console.log(err);
-    }
-})
+    job = await new Job({ language, filePath, userInput }).save();
+    const jobId = job["_id"];
+    addJobToQueu(jobId);
+    res.status(201).json({ success: true, jobId });
+  } catch (err) {
+    return res.status(400).json({ success: false, err: JSON.stringify(err) });
+  }
+});
 app.use(AddProblems);
 app.use(GetProblems);
 
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
-})
+});
